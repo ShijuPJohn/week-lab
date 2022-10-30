@@ -2,18 +2,15 @@ import json
 
 import sqlalchemy
 from flask import Flask, make_response
-from flask_cors import CORS
 from flask_restful import Resource, Api, fields, marshal_with, HTTPException, reqparse
 from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
 api = Api(app)
-app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///database.sqlite3"
+app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///api_database.sqlite3"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy()
 db.init_app(app)
-cors = CORS(app)
-app.config['CORS_HEADERS'] = 'Content-Type'
 app.app_context().push()
 
 
@@ -51,7 +48,7 @@ class Enrollments(db.Model):
     student_id = db.Column(db.Integer, db.ForeignKey(
         "student.student_id"), nullable=False, )
     course_id = db.Column(db.Integer, db.ForeignKey(
-        "course.course_id"), nullable=False, )
+        "course.course_id"), nullable=False)
 
 
 course_output = {
@@ -88,7 +85,6 @@ enrollment_parser.add_argument("course_id")
 
 
 class CourseAPI(Resource):
-
     @marshal_with(course_output)
     def get(self, cid):
         try:
@@ -124,10 +120,9 @@ class CourseAPI(Resource):
     def delete(self, cid):
         course = Course.query.filter(Course.course_id == cid).first()
         if not course:
-            return "Course not found", 404
+            raise CustomError(404, "Course not found")
         try:
             Course.query.filter(Course.course_id == cid).delete()
-            Enrollments.query.filter(Enrollments.ecourse_id == cid).delete()
             db.session.commit()
             return "Successfully Deleted", 200
         except Exception as e:
@@ -154,7 +149,7 @@ class CourseAPI(Resource):
             course = Course.query.filter(Course.course_id == cid).first()
         except Exception as e:
             raise CustomError(500, "Internal server error")
-        return course, 201
+        return course, 200
 
 
 class StudentAPI(Resource):
@@ -185,7 +180,7 @@ class StudentAPI(Resource):
             db.session.commit()
         except sqlalchemy.exc.IntegrityError:
             raise CustomError(409, "Student already exist")
-        except Exception as e:
+        except Exception:
             raise CustomError(500, "Internal Server Error")
         return student, 201
 
@@ -197,7 +192,7 @@ class StudentAPI(Resource):
             Student.query.filter(Student.student_id == sid).delete()
             db.session.commit()
             return "Successfully Deleted", 200
-        except Exception as e:
+        except Exception:
             raise CustomError(500, "Internal server error")
 
     @marshal_with(student_output)
@@ -218,9 +213,9 @@ class StudentAPI(Resource):
                 {"roll_number": roll_number, "first_name": first_name, "last_name": last_name})
             db.session.commit()
             student = Student.query.filter(Student.student_id == sid).first()
-        except Exception as e:
+        except Exception:
             raise CustomError(500, "Internal server error")
-        return student, 201
+        return student, 200
 
 
 class EnrollmentAPI(Resource):
@@ -229,12 +224,11 @@ class EnrollmentAPI(Resource):
         try:
             student = Student.query.filter(Student.student_id == sid).first()
             enrollments = Enrollments.query.filter(Enrollments.student_id == sid).all()
-        except Exception as e:
-            print(e)
+        except Exception:
             raise CustomError(500, "")
         if student is None:
             raise CustomValidationError(400, "ENROLLMENT002", "Student does not exist")
-        if enrollments is None:
+        if enrollments is None or len(enrollments) == 0:
             raise CustomError(404, "Student is not enrolled in any course")
         else:
             return enrollments
@@ -242,23 +236,22 @@ class EnrollmentAPI(Resource):
     @marshal_with(enrollment_output)
     def post(self, sid):
         student = Student.query.filter(Student.student_id == sid).first()
+        if student is None:
+            raise CustomError(404, "Student not found")
         args = enrollment_parser.parse_args()
         cid = args.get("course_id", None)
         course = Course.query.filter(Course.course_id == cid).first()
         if cid is None or course is None:
             raise CustomValidationError(400, "ENROLLMENT001", "Course does not exist")
-        if student is None:
-            raise CustomValidationError(400, "ENROLLMENT002", "Student does not exist")
         existing_enrollment = Enrollments.query.filter(
             Enrollments.student_id == sid, Enrollments.course_id == cid).first()
         if existing_enrollment is not None:
-            raise CustomError(404, "Enrollment already exists")
+            raise CustomError(400, "Enrollment already exists")
         try:
             enrollment = Enrollments(student_id=sid, course_id=cid)
             db.session.add(enrollment)
             db.session.commit()
-        except Exception as e:
-            print(e)
+        except Exception:
             raise CustomError(500, "Internal Server Error")
         return enrollment, 201
 
@@ -266,9 +259,9 @@ class EnrollmentAPI(Resource):
         student = Student.query.filter(Student.student_id == sid).first()
         course = Course.query.filter(Course.course_id == cid).first()
         if student is None:
-            return CustomValidationError(400, "ENROLLMENT002", "Student does not exist")
+            raise CustomValidationError(400, "ENROLLMENT002", "Student does not exist")
         if course is None:
-            return CustomValidationError(400, "ENROLLMENT001", "Course does not exist")
+            raise CustomValidationError(400, "ENROLLMENT001", "Course does not exist")
         existing_enrollment = Enrollments.query.filter(
             Enrollments.student_id == sid, Enrollments.course_id == cid).first()
         if not existing_enrollment:
@@ -276,8 +269,7 @@ class EnrollmentAPI(Resource):
         try:
             Enrollments.query.filter(Enrollments.student_id == sid, Enrollments.course_id == cid).delete()
             db.session.commit()
-        except Exception as e:
-            print(e)
+        except Exception:
             raise CustomError(500, "Internal Server Error")
         return "Successfully deleted", 200
 
@@ -287,4 +279,4 @@ api.add_resource(CourseAPI, "/api/course", "/api/course/<string:cid>")
 api.add_resource(EnrollmentAPI, "/api/student/<string:sid>/course", "/api/student/<string:sid>/course/<string:cid>")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
